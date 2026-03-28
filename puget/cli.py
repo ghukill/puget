@@ -27,8 +27,9 @@ EXIT_ERROR = 1
 
 
 @click.group(invoke_without_command=True)
+@click.option("-r", "--resume", is_flag=True, help="Resume the most recent wave.")
 @click.pass_context
-def cli(ctx):
+def cli(ctx, resume):
     """puget — a CLI agent turn executor.
 
     Run with no arguments for the interactive REPL, or pass a message
@@ -37,7 +38,7 @@ def cli(ctx):
     if ctx.invoked_subcommand is None:
         from puget.repl import run_repl
 
-        run_repl()
+        run_repl(resume=resume)
 
 
 @cli.command()
@@ -186,6 +187,7 @@ def main():
             message = " ".join(args)
             _oneshot(message, resume=resume)
             return
+
     cli()
 
 

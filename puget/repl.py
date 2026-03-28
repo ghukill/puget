@@ -19,13 +19,13 @@ from puget.model import get_model
 from puget.output import console, print_log, set_show_thinking, show_thinking
 
 
-def run_repl():
+def run_repl(*, resume: bool = False):
     """Run the interactive REPL.
 
-    Resumes the most recent wave if one exists, otherwise creates a new
-    one. Each user input is sent through core.run(), which handles tool
-    execution and model interaction to completion before returning
-    control to the prompt.
+    With resume=True, continues the most recent wave. Otherwise starts
+    a new wave. Each user input is sent through core.run(), which
+    handles tool execution and model interaction to completion before
+    returning control to the prompt.
 
     Slash commands:
       /new            — start a new wave
@@ -36,13 +36,15 @@ def run_repl():
     """
     conn = db.connect()
 
-    # Resume existing wave or start fresh.
-    wid = db.current_wave_id(conn)
-    if wid is not None:
-        resuming = True
+    resuming = False
+    if resume:
+        wid = db.current_wave_id(conn)
+        if wid is not None:
+            resuming = True
+        else:
+            wid = db.new_wave(conn)
     else:
         wid = db.new_wave(conn)
-        resuming = False
 
     model_name = get_model()
 
