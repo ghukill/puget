@@ -7,6 +7,7 @@ The typed library silently drops these, causing 400 errors on the next turn.
 """
 
 import os
+import re
 from typing import Any
 
 import httpx
@@ -61,6 +62,10 @@ def chat(
     }
     if tools:
         payload["tools"] = tools
+    # Always request thinking from the model — it produces better results
+    # even when the thinking isn't displayed. Display is controlled separately
+    # by show_thinking() in output.py.
+    payload["think"] = True
 
     url = f"{_base_url()}/api/chat"
     resp = httpx.post(url, json=payload, timeout=_TIMEOUT)
@@ -68,7 +73,19 @@ def chat(
     msg = resp.json()["message"]
 
     content: str = msg.get("content") or ""
-    # Strip <think> blocks from reasoning models
+
+    # Thinking can arrive two ways:
+    #   1. Ollama's native "thinking" field (when think=true is supported).
+    #   2. <think>...</think> tags embedded in content (older models).
+    # Check both, preferring the native field.
+    thinking: str | None = (msg.get("thinking") or "").strip() or None
+
+    if thinking is None and "</think>" in content:
+        match = re.search(r"<think>(.*?)</think>", content, re.DOTALL)
+        if match:
+            thinking = match.group(1).strip() or None
+
+    # Always strip <think> tags from content regardless.
     if "</think>" in content:
         content = content.split("</think>", 1)[-1].strip()
 
@@ -79,4 +96,5 @@ def chat(
         "role": "assistant",
         "content": content,
         "tool_calls": raw_tool_calls,
+        "thinking": thinking,
     }

@@ -16,7 +16,7 @@ from rich.rule import Rule
 
 from puget import core, db
 from puget.model import get_model
-from puget.output import console, print_log
+from puget.output import console, print_log, set_show_thinking, show_thinking
 
 
 def run_repl():
@@ -28,10 +28,11 @@ def run_repl():
     control to the prompt.
 
     Slash commands:
-      /new   — start a new wave
-      /log   — print wave history
-      /help  — show available commands
-      /quit  — exit
+      /new            — start a new wave
+      /log            — print wave history
+      /thinking on|off — toggle display of model thinking
+      /help           — show available commands
+      /quit           — exit
     """
     conn = db.connect()
 
@@ -48,7 +49,9 @@ def run_repl():
     console.print()
     label = f"resuming wave #{wid}" if resuming else "new wave"
     console.print(Rule(f"[bold]puget[/bold]  [dim]model: {model_name} • {label}[/dim]"))
-    console.print("[dim]  Enter sends • Esc+Enter for newline • /new /log /quit[/dim]")
+    thinking_status = "on" if show_thinking() else "off"
+    console.print(f"[dim]  Enter sends • Esc+Enter for newline • /new /log /thinking /quit[/dim]")
+    console.print(f"[dim]  thinking: {thinking_status}[/dim]")
     console.print()
 
     kb = _build_key_bindings()
@@ -78,6 +81,9 @@ def run_repl():
             elif cmd == "/log":
                 turns = db.get_turns(conn, wid)
                 print_log(turns)
+                continue
+            elif cmd.startswith("/thinking"):
+                _handle_thinking_cmd(cmd)
                 continue
             elif cmd == "/help":
                 _print_help()
@@ -115,12 +121,30 @@ def _build_key_bindings():
     return kb
 
 
+def _handle_thinking_cmd(cmd: str) -> None:
+    """Handle /thinking [on|off] command."""
+    parts = cmd.split()
+    if len(parts) == 1:
+        # Just "/thinking" — show current status.
+        status = "on" if show_thinking() else "off"
+        console.print(f"[dim]thinking: {status}[/dim]")
+    elif parts[1] == "on":
+        set_show_thinking(True)
+        console.print("[dim]thinking: on[/dim]")
+    elif parts[1] == "off":
+        set_show_thinking(False)
+        console.print("[dim]thinking: off[/dim]")
+    else:
+        console.print("[dim]Usage: /thinking [on|off][/dim]")
+
+
 def _print_help():
     """Print available REPL commands."""
     console.print()
     console.print("[bold]Commands:[/bold]")
-    console.print("  /new   — start a new wave")
-    console.print("  /log   — print wave history")
-    console.print("  /help  — show this help")
-    console.print("  /quit  — exit")
+    console.print("  /new            — start a new wave")
+    console.print("  /log            — print wave history")
+    console.print("  /thinking on|off — toggle model thinking display")
+    console.print("  /help           — show this help")
+    console.print("  /quit           — exit")
     console.print()

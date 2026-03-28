@@ -10,6 +10,7 @@ Two consoles are exposed:
 """
 
 import json
+import os
 from typing import Any
 
 from rich.console import Console
@@ -17,6 +18,21 @@ from rich.markdown import Markdown
 
 console = Console()
 err_console = Console(stderr=True)
+
+# Runtime-mutable flag for showing model thinking. Initialized from
+# $PUGET_SHOW_THINKING ("true" → on), toggled via /thinking in the REPL.
+_show_thinking: bool = os.environ.get("PUGET_SHOW_THINKING", "true").lower() == "true"
+
+
+def show_thinking() -> bool:
+    """Return whether thinking display is currently enabled."""
+    return _show_thinking
+
+
+def set_show_thinking(value: bool) -> None:
+    """Enable or disable thinking display at runtime."""
+    global _show_thinking
+    _show_thinking = value
 
 
 def print_assistant(content: str) -> None:
@@ -30,6 +46,19 @@ def print_assistant(content: str) -> None:
         console.print()
         console.print(Markdown(content))
         console.print()
+
+
+def print_thinking(thinking: str | None) -> None:
+    """Render model thinking/reasoning to stderr in a dim panel.
+
+    Only renders if thinking display is enabled (via $PUGET_SHOW_THINKING
+    or /thinking on in the REPL). Empty or None thinking is silently skipped.
+    """
+    if not _show_thinking or not thinking or not thinking.strip():
+        return
+    err_console.print()
+    err_console.print("[dim italic]💭 thinking...[/dim italic]")
+    err_console.print(f"[dim italic]{thinking}[/dim italic]")
 
 
 def print_log(turns: list[dict[str, Any]]) -> None:

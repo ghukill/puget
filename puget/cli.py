@@ -19,7 +19,7 @@ import sys
 import click
 
 from puget import core, db
-from puget.output import console, err_console, print_assistant, print_log
+from puget.output import console, err_console, print_assistant, print_log, print_thinking
 
 EXIT_DONE = 0
 EXIT_TOOL = 10
@@ -60,6 +60,8 @@ def say(message, resume):
         wid = db.ensure_wave(conn) if resume else db.new_wave(conn)
 
         response = core.turn(conn, wid, message)
+
+        print_thinking(response.get("thinking"))
 
         if response["tool_calls"]:
             if response["content"]:
@@ -161,33 +163,42 @@ def main():
 
     Handles three modes of operation:
 
-      puget              → REPL (no arguments, handled by click group)
-      puget "message"    → one-shot: run to completion with tool execution
-      puget <command>    → subcommand dispatch (say, log, new, echo)
+      puget                        → REPL (no arguments, handled by click group)
+      puget "message"              → one-shot: new wave, run to completion
+      puget -r "message"           → one-shot: resume most recent wave
+      puget --resume "message"     → same as -r
+      puget <command>              → subcommand dispatch (say, log, new, echo)
 
     One-shot detection: if the first argument isn't a known subcommand
     or flag, everything after 'puget' is joined into a message and
-    executed via core.run().
+    executed via core.run(). The -r/--resume flag is consumed first.
     """
     if len(sys.argv) > 1:
-        first = sys.argv[1]
-        if first not in _SUBCOMMANDS and not first.startswith("-"):
-            message = " ".join(sys.argv[1:])
-            _oneshot(message)
+        args = sys.argv[1:]
+        resume = False
+
+        # Consume -r / --resume before one-shot detection.
+        if args and args[0] in ("-r", "--resume"):
+            resume = True
+            args = args[1:]
+
+        if args and args[0] not in _SUBCOMMANDS and not args[0].startswith("-"):
+            message = " ".join(args)
+            _oneshot(message, resume=resume)
             return
     cli()
 
 
-def _oneshot(message):
+def _oneshot(message, *, resume=False):
     """Run a one-shot message to completion.
 
-    Creates a new wave, sends the message, auto-executes any tool calls
-    the model requests, and exits. This is what powers
-    `puget "do something"` — the fire-and-forget mode.
+    Sends the message, auto-executes any tool calls the model requests,
+    and exits. With resume=True, continues the most recent wave instead
+    of starting a new one.
     """
     try:
         conn = db.connect()
-        wid = db.new_wave(conn)
+        wid = db.ensure_wave(conn) if resume else db.new_wave(conn)
         core.run(conn, wid, message)
     except KeyboardInterrupt:
         err_console.print("\n[dim](interrupted)[/dim]")

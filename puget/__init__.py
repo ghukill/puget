@@ -11,6 +11,8 @@ Environment variables:
                       the standard OLLAMA_HOST if both are set.
   PUGET_DB            Override the database path directly. Takes
                       precedence over PUGET_HOME for the DB location.
+  PUGET_SHOW_THINKING If "true", display model thinking/reasoning blocks
+                      instead of silently stripping them.
 """
 
 import os

@@ -19,7 +19,7 @@ import sqlite3
 from typing import Any
 
 from puget import db, model, tools
-from puget.output import err_console, print_assistant
+from puget.output import err_console, print_assistant, print_thinking
 
 
 def turn(conn: sqlite3.Connection, wid: int, message: str | None = None) -> dict[str, Any]:
@@ -87,6 +87,9 @@ def run(conn: sqlite3.Connection, wid: int, message: str) -> dict[str, Any]:
     """
     response = turn(conn, wid, message)
 
+    # Show thinking if the model produced any.
+    print_thinking(response.get("thinking"))
+
     # If the model responded with both text and tool calls, show the text
     # before we start executing tools.
     if response["content"] and response["tool_calls"]:
@@ -103,6 +106,9 @@ def run(conn: sqlite3.Connection, wid: int, message: str) -> dict[str, Any]:
 
         # Continue the wave — no user message, just the tool results.
         response = turn(conn, wid)
+
+        # Show thinking if the model produced any.
+        print_thinking(response.get("thinking"))
 
         # Show any text that accompanies further tool calls.
         if response["content"] and response["tool_calls"]:
