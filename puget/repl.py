@@ -10,6 +10,7 @@ for run() to complete and prompts for the next input.
 """
 
 from prompt_toolkit import PromptSession
+from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
 from rich.rule import Rule
@@ -17,6 +18,7 @@ from rich.rule import Rule
 from puget import core, db
 from puget.model import get_model
 from puget.output import console, print_log, set_show_thinking, show_thinking
+from puget.skills import discover
 
 
 def run_repl(*, resume: bool = False):
@@ -57,7 +59,14 @@ def run_repl(*, resume: bool = False):
     console.print()
 
     kb = _build_key_bindings()
-    session = PromptSession(key_bindings=kb, multiline=True)
+    skills = discover()
+    completer = _SlashCompleter(skills=skills)
+    session = PromptSession(
+        key_bindings=kb,
+        multiline=True,
+        completer=completer,
+        complete_while_typing=False,
+    )
 
     while True:
         try:
@@ -121,6 +130,79 @@ def _build_key_bindings():
         event.current_buffer.insert_text("\n")
 
     return kb
+
+
+# -- Autocomplete ------------------------------------------------------------
+
+# Slash commands with descriptions for the completion menu.
+_SLASH_COMMANDS = {
+    "/help": "show available commands",
+    "/log": "print wave history",
+    "/new": "start a new wave",
+    "/quit": "exit",
+    "/thinking": "toggle model thinking display",
+}
+
+_THINKING_ARGS = {
+    "on": "enable thinking display",
+    "off": "disable thinking display",
+}
+
+
+class _SlashCompleter(Completer):
+    """Tab-completer for slash commands and skill names.
+
+    Only offers completions when the input starts with '/'. Skills
+    are included as slash commands — selecting one sends the skill
+    name to the model as a regular message (falls through the
+    unrecognized-command path).
+    """
+
+    def __init__(self, skills: list[dict[str, str]] | None = None):
+        self._skills = skills or []
+
+    def get_completions(self, document, complete_event):
+        text = document.text_before_cursor
+
+        if not text.startswith("/"):
+            return
+
+        parts = text.split()
+
+        # Sub-argument completion: "/thinking on|off"
+        if parts[0] == "/thinking":
+            if len(parts) == 2:
+                prefix = parts[1]
+            elif len(parts) == 1 and text.endswith(" "):
+                prefix = ""
+            else:
+                return
+            for arg, desc in _THINKING_ARGS.items():
+                if arg.startswith(prefix):
+                    yield Completion(arg, start_position=-len(prefix), display_meta=desc)
+            return
+
+        # Top-level: complete the slash command itself.
+        # Only when still typing the first word.
+        if len(parts) > 1 or text.endswith(" "):
+            return
+
+        prefix = text
+        for cmd, desc in _SLASH_COMMANDS.items():
+            if cmd.startswith(prefix):
+                yield Completion(cmd, start_position=-len(prefix), display_meta=desc)
+
+        for skill in self._skills:
+            skill_cmd = f"/{skill['name']}"
+            if skill_cmd.startswith(prefix):
+                yield Completion(
+                    skill_cmd,
+                    start_position=-len(prefix),
+                    display_meta=skill["description"],
+                )
+
+
+# -- Slash command handlers --------------------------------------------------
 
 
 def _handle_thinking_cmd(cmd: str) -> None:
