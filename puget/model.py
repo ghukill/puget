@@ -1,12 +1,21 @@
-"""Ollama model interaction for puget."""
+"""Ollama model interaction for puget.
+
+Uses raw HTTP calls to the Ollama API instead of the ollama Python library.
+This preserves opaque fields like tool_call ``id`` which Ollama uses to
+round-trip provider-specific metadata (e.g. Gemini's ``thought_signature``).
+The typed library silently drops these, causing 400 errors on the next turn.
+"""
 
 import os
 from typing import Any
 
-import ollama
+import httpx
 
 
 DEFAULT_MODEL = "minimax-m2.7:cloud"
+
+# Timeout: None means no read timeout (large model responses can be slow).
+_TIMEOUT = httpx.Timeout(connect=10, read=None, write=10, pool=10)
 
 
 def get_model() -> str:
@@ -14,15 +23,16 @@ def get_model() -> str:
     return os.environ.get("PUGET_OLLAMA_MODEL", DEFAULT_MODEL)
 
 
-def _client() -> ollama.Client:
-    """Return an Ollama client, respecting $PUGET_OLLAMA_HOST.
+def _base_url() -> str:
+    """Resolve the Ollama base URL.
 
-    If $PUGET_OLLAMA_HOST is set it takes precedence.  Otherwise the
-    ollama library falls back to $OLLAMA_HOST, then its built-in
-    default (http://localhost:11434).
+    Checks $PUGET_OLLAMA_HOST, then $OLLAMA_HOST, then defaults to
+    http://localhost:11434.  Ensures the result has a scheme.
     """
-    host = os.environ.get("PUGET_OLLAMA_HOST")
-    return ollama.Client(host=host)
+    host = os.environ.get("PUGET_OLLAMA_HOST") or os.environ.get("OLLAMA_HOST") or "http://localhost:11434"
+    if not host.startswith(("http://", "https://")):
+        host = f"http://{host}"
+    return host.rstrip("/")
 
 
 def chat(
@@ -36,36 +46,37 @@ def chat(
     Returns a dict with either:
       - {"role": "assistant", "content": "...", "tool_calls": None}
       - {"role": "assistant", "content": "", "tool_calls": [...]}
+
+    Tool-call dicts preserve all fields from the Ollama API (including
+    ``id`` and ``function.index``) so they can be echoed back verbatim.
     """
     if tools is None:
         from puget.tools import TOOL_DEFINITIONS
         tools = TOOL_DEFINITIONS
 
-    response = _client().chat(
-        model=get_model(),
-        messages=messages,
-        tools=tools if tools else None,
-    )
-    msg = response.message
+    payload: dict[str, Any] = {
+        "model": get_model(),
+        "messages": messages,
+        "stream": False,
+    }
+    if tools:
+        payload["tools"] = tools
 
-    content = msg.content or ""
+    url = f"{_base_url()}/api/chat"
+    resp = httpx.post(url, json=payload, timeout=_TIMEOUT)
+    resp.raise_for_status()
+    msg = resp.json()["message"]
+
+    content: str = msg.get("content") or ""
     # Strip <think> blocks from reasoning models
     if "</think>" in content:
         content = content.split("</think>", 1)[-1].strip()
 
-    tool_calls: list[dict[str, Any]] | None = None
-    if msg.tool_calls:
-        tool_calls = []
-        for tc in msg.tool_calls:
-            tool_calls.append({
-                "function": {
-                    "name": tc.function.name,
-                    "arguments": tc.function.arguments,
-                },
-            })
+    # Preserve tool_calls exactly as returned — including id, index, etc.
+    raw_tool_calls: list[dict[str, Any]] | None = msg.get("tool_calls") or None
 
     return {
         "role": "assistant",
         "content": content,
-        "tool_calls": tool_calls,
+        "tool_calls": raw_tool_calls,
     }
