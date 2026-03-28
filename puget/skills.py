@@ -15,9 +15,10 @@ This means skill instructions are never in context until the model
 decides they're relevant. Only the name and one-line description
 occupy prompt space.
 
-Skill locations:
-  - $PUGET_HOME/skills/  Global (user-level) skills (default: ~/.puget/skills/).
-  - .puget/skills/       Project-level skills (relative to cwd).
+Skill locations (trait layer order):
+  - <puget package>/system/skills/  System skills (bundled with puget, always present).
+  - $PUGET_HOME/skills/              Global (user-level) skills (default: ~/.puget/skills/).
+  - .puget/skills/                   Project-level skills (relative to cwd).
 
 A skill directory looks like:
   my-skill/
@@ -31,12 +32,23 @@ from pathlib import Path
 
 # -- Discovery ---------------------------------------------------------------
 
+def _system_skills_dir() -> Path:
+    """Return the system trait layer's skills directory.
+
+    This is the system/skills/ directory bundled with the puget package.
+    Resolved relative to this file's location in the installed package.
+    """
+    return Path(__file__).resolve().parent.parent / "system" / "skills"
+
+
 def skill_dirs() -> list[Path]:
     """Return the directories to scan for skills.
 
-    Two locations are checked:
-      - $PUGET_HOME/skills/  for global skills (default: ~/.puget/skills/).
-      - .puget/skills/        for project-specific skills (relative to cwd).
+    Three trait layers are checked, project-first so narrower scopes
+    shadow broader ones (first skill found with a given name wins):
+      - .puget/skills/                  Project-specific skills (relative to cwd).
+      - $PUGET_HOME/skills/             Global user skills (default: ~/.puget/skills/).
+      - <puget package>/system/skills/  System skills (bundled, always present).
 
     Directories that don't exist are included in the list but skipped
     during scanning. This keeps the logic simple and the locations
@@ -44,8 +56,9 @@ def skill_dirs() -> list[Path]:
     """
     from puget import puget_home
     return [
-        puget_home() / "skills",
         Path.cwd() / ".puget" / "skills",
+        puget_home() / "skills",
+        _system_skills_dir(),
     ]
 
 
@@ -58,8 +71,8 @@ def discover(search_dirs: list[Path] | None = None) -> list[dict[str, str]]:
     description is what tells the model when to use the skill).
 
     First skill found with a given name wins — duplicates are silently
-    skipped. Global skills are scanned before project skills, so project
-    skills can shadow globals by using the same name.
+    skipped. Trait layers are scanned project → global → system, so
+    project skills shadow global, and global shadows system.
 
     Args:
         search_dirs: Override the default skill directories. Useful for
