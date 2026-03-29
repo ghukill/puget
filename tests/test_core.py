@@ -8,6 +8,7 @@ and terminate on text responses.
 import json
 from unittest.mock import patch
 
+import httpx
 import pytest
 
 from puget import core, db
@@ -37,6 +38,13 @@ def _tool_response(
         "content": content,
         "tool_calls": [{"function": {"name": tool_name, "arguments": arguments}}],
     }
+
+
+def _http_400_error() -> httpx.HTTPStatusError:
+    """Build an HTTP 400 error matching httpx.raise_for_status()."""
+    request = httpx.Request("POST", "http://localhost:11434/api/chat")
+    response = httpx.Response(400, request=request)
+    return httpx.HTTPStatusError("400 Bad Request", request=request, response=response)
 
 
 # -- turn() ------------------------------------------------------------------
@@ -96,6 +104,44 @@ class TestTurn:
         turns = db.get_turns(conn, wid)
         roles = [t["role"] for t in turns]
         assert roles == ["tool", "assistant"]
+
+    @patch("puget.core.model.chat")
+    def test_retries_with_emergency_context_after_400(self, mock_chat, conn):
+        mock_chat.side_effect = [_http_400_error(), _text_response("ok")]
+        wid = db.new_wave(conn)
+
+        response = core.turn(conn, wid, "hello")
+
+        assert response["content"] == "ok"
+        assert response["wave_id"] == wid
+        assert mock_chat.call_count == 2
+
+        first_messages = mock_chat.call_args_list[0].args[0]
+        second_messages = mock_chat.call_args_list[1].args[0]
+        assert first_messages != second_messages
+        assert any(
+            m["role"] == "system" and "request-size guard" in m["content"]
+            for m in second_messages
+        )
+
+    @patch("puget.core.model.chat")
+    def test_auto_forks_after_second_400(self, mock_chat, conn):
+        mock_chat.side_effect = [_http_400_error(), _http_400_error(), _text_response("recovered")]
+        wid = db.new_wave(conn)
+
+        response = core.turn(conn, wid, "hello")
+
+        assert mock_chat.call_count == 3
+        assert response["content"] == "recovered"
+        assert response["wave_id"] != wid
+
+        original_turns = db.get_turns(conn, wid)
+        assert [t["role"] for t in original_turns] == ["user"]
+
+        fork_turns = db.get_turns(conn, response["wave_id"])
+        assert [t["role"] for t in fork_turns] == ["user", "user", "assistant"]
+        assert f"previous wave #{wid}" in fork_turns[0]["content"].lower()
+        assert fork_turns[1]["content"] == "hello"
 
 
 # -- run() -------------------------------------------------------------------

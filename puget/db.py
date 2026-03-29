@@ -16,7 +16,6 @@ Two tables:
            own column, never smuggled into content as a JSON blob.
 """
 
-import json
 import os
 import sqlite3
 from pathlib import Path
@@ -189,26 +188,27 @@ def last_assistant_turn(conn: sqlite3.Connection, wave_id: int) -> dict[str, Any
     return dict(row) if row else None
 
 
-def messages_for_model(conn: sqlite3.Connection, wave_id: int) -> list[dict[str, Any]]:
-    """Build the messages list for the Ollama API from stored turns.
+def messages_for_model(
+    conn: sqlite3.Connection,
+    wave_id: int,
+    *,
+    emergency: bool = False,
+) -> list[dict[str, Any]]:
+    """Build context-bounded model messages for a wave.
 
-    Reconstructs the full conversation history in the format the model
-    expects. Assistant turns with tool_calls get their structured data
-    reattached from the tool_calls column — no JSON sniffing required.
+    Includes the dynamic system message, reconstructs turn messages, and
+    enforces request-size guardrails via puget.context.
+
+    Args:
+        conn: SQLite connection.
+        wave_id: Wave ID.
+        emergency: Build a reduced emergency payload used after a 400.
+
+    Returns:
+        Message list ready for model.chat().
     """
+    from puget.context import build_messages
     from puget.prompt import system_message
 
     turns = get_turns(conn, wave_id)
-    messages: list[dict[str, Any]] = [system_message()]
-
-    for t in turns:
-        if t["role"] == "assistant" and t["tool_calls"]:
-            messages.append({
-                "role": "assistant",
-                "content": t["content"],
-                "tool_calls": json.loads(t["tool_calls"]),
-            })
-        else:
-            messages.append({"role": t["role"], "content": t["content"]})
-
-    return messages
+    return build_messages(system_message(), turns, emergency=emergency)

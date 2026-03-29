@@ -54,7 +54,7 @@ def run_repl(*, resume: bool = False):
     label = f"resuming wave #{wid}" if resuming else "new wave"
     console.print(Rule(f"[bold]puget[/bold]  [dim]model: {model_name} • {label}[/dim]"))
     thinking_status = "on" if show_thinking() else "off"
-    console.print(f"[dim]  Enter sends • Esc+Enter for newline • /new /log /thinking /quit[/dim]")
+    console.print("[dim]  Enter sends • Esc+Enter for newline • /new /log /thinking /quit[/dim]")
     console.print(f"[dim]  thinking: {thinking_status}[/dim]")
     console.print()
 
@@ -107,7 +107,8 @@ def run_repl(*, resume: bool = False):
         console.print()
 
         try:
-            core.run(conn, wid, text)
+            response = core.run(conn, wid, text)
+            wid = response.get("wave_id", wid)
         except KeyboardInterrupt:
             console.print("\n[dim](interrupted)[/dim]")
         except Exception as e:
