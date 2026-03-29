@@ -15,10 +15,12 @@ Utility commands:
 
 import json
 import sys
+from pathlib import Path
 
 import click
 
 from puget import core, db
+from puget import skills as skills_mod
 from puget.output import console, err_console, print_assistant, print_log, print_thinking
 
 EXIT_DONE = 0
@@ -152,11 +154,128 @@ def new():
         sys.exit(EXIT_ERROR)
 
 
+# -- Skill management --------------------------------------------------------
+
+@cli.group()
+def skill():
+    """Manage puget skills.
+
+    Install, list, and remove skills. Skills can live in the project
+    (.puget/skills/) or globally ($PUGET_HOME/skills/).
+    """
+
+
+@skill.command()
+@click.argument("source")
+@click.option(
+    "-g", "--global", "global_scope", is_flag=True,
+    help="Install to $PUGET_HOME/skills/ (global, all projects).",
+)
+@click.option("--ref", help="Git ref (branch or tag) to checkout.")
+@click.option("--path", "subpath", help="Path to skill directory within a git repository.")
+def install(source, global_scope, ref, subpath):
+    """Install a skill from a local path or git URL.
+
+    SOURCE can be a local directory containing a SKILL.md, or a git URL.
+    GitHub tree URLs are supported for pointing to a subdirectory:
+
+    \b
+      puget skill install ./path/to/my-skill
+      puget skill install https://github.com/user/repo
+      puget skill install https://github.com/user/repo/tree/main/skills/audit
+      puget skill install https://github.com/user/repo --ref v1.0 --path skills/audit
+
+    By default, skills are installed to the project (.puget/skills/).
+    Use --global to install to $PUGET_HOME/skills/ for all projects.
+    """
+    try:
+        target = skills_mod.install_target(global_scope=global_scope)
+        name = skills_mod.install_skill(source, target, ref=ref, subpath=subpath)
+        label = "$PUGET_HOME/skills/" if global_scope else ".puget/skills/"
+        console.print(f"[green]✓[/green] Installed [bold]{name}[/bold] to {label}")
+    except Exception as e:
+        err_console.print(f"[bold red]Error:[/bold red] {e}")
+        sys.exit(EXIT_ERROR)
+
+
+@skill.command(name="list")
+@click.option(
+    "-g", "--global", "global_scope", is_flag=True,
+    help="Show only global skills.",
+)
+@click.option(
+    "-p", "--project", "project_scope", is_flag=True,
+    help="Show only project skills.",
+)
+def list_cmd(global_scope, project_scope):
+    """List installed skills.
+
+    Shows skills from all trait layers by default (project, global,
+    system). Use --global or --project to filter to one layer.
+    """
+    try:
+        if global_scope:
+            layers = ["global"]
+        elif project_scope:
+            layers = ["project"]
+        else:
+            layers = None
+
+        by_layer = skills_mod.list_by_layer(layers=layers)
+        _print_skill_layers(by_layer)
+    except Exception as e:
+        err_console.print(f"[bold red]Error:[/bold red] {e}")
+        sys.exit(EXIT_ERROR)
+
+
+@skill.command()
+@click.argument("name")
+@click.option(
+    "-g", "--global", "global_scope", is_flag=True,
+    help="Remove from $PUGET_HOME/skills/ (global).",
+)
+def remove(name, global_scope):
+    """Remove an installed skill by NAME.
+
+    By default, removes from the project (.puget/skills/).
+    Use --global to remove from $PUGET_HOME/skills/.
+    """
+    try:
+        target = skills_mod.install_target(global_scope=global_scope)
+        skills_mod.remove_skill(name, target)
+        label = "$PUGET_HOME/skills/" if global_scope else ".puget/skills/"
+        console.print(f"[green]✓[/green] Removed [bold]{name}[/bold] from {label}")
+    except Exception as e:
+        err_console.print(f"[bold red]Error:[/bold red] {e}")
+        sys.exit(EXIT_ERROR)
+
+
+def _print_skill_layers(by_layer: dict[str, list[dict[str, str]]]) -> None:
+    """Pretty-print skills grouped by layer."""
+    labels = {
+        "project": "Project (.puget/skills/)",
+        "global": f"Global ({skills_mod.install_target(global_scope=True)})",
+        "system": "System (bundled)",
+    }
+
+    for layer, skills in by_layer.items():
+        console.print(f"\n[bold]{labels.get(layer, layer)}[/bold]")
+        if not skills:
+            console.print("  [dim](none)[/dim]")
+        else:
+            for s in skills:
+                desc = s["description"]
+                if len(desc) > 60:
+                    desc = desc[:57] + "..."
+                console.print(f"  [cyan]{s['name']:<24}[/cyan] {desc}")
+    console.print()
+
+
 # -- Entry point -------------------------------------------------------------
 
 # Known subcommand names. Used to distinguish one-shot messages from
 # subcommand invocations in main().
-_SUBCOMMANDS = {"say", "echo", "log", "new"}
+_SUBCOMMANDS = {"say", "echo", "log", "new", "skill"}
 
 
 def main():
@@ -168,14 +287,45 @@ def main():
       puget "message"              → one-shot: new wave, run to completion
       puget -r "message"           → one-shot: resume most recent wave
       puget --resume "message"     → same as -r
-      puget <command>              → subcommand dispatch (say, log, new, echo)
+      puget <command>              → subcommand dispatch (say, log, new, echo, skill)
+      puget --skill <path> ...     → load an ephemeral skill for the session
+
+    The --skill flag is consumed before click processing so it works in
+    all modes (REPL, one-shot, and subcommands). Multiple --skill flags
+    are supported.
 
     One-shot detection: if the first argument isn't a known subcommand
     or flag, everything after 'puget' is joined into a message and
     executed via core.run(). The -r/--resume flag is consumed first.
     """
-    if len(sys.argv) > 1:
-        args = sys.argv[1:]
+    # Extract --skill flags from sys.argv before click/oneshot processing.
+    # This ensures ephemeral skills work in all modes.
+    raw_args = sys.argv[1:]
+    remaining: list[str] = []
+    skill_sources: list[str] = []
+    i = 0
+    while i < len(raw_args):
+        if raw_args[i] == "--skill" and i + 1 < len(raw_args):
+            skill_sources.append(raw_args[i + 1])
+            i += 2
+        else:
+            remaining.append(raw_args[i])
+            i += 1
+
+    # Register ephemeral skills.
+    for src in skill_sources:
+        try:
+            path = skills_mod.resolve_ephemeral_source(src)
+            skills_mod.add_ephemeral_skill(path)
+        except Exception as e:
+            err_console.print(f"[bold red]Error:[/bold red] {e}")
+            sys.exit(EXIT_ERROR)
+
+    # Update sys.argv with --skill flags stripped.
+    sys.argv = [sys.argv[0]] + remaining
+
+    if remaining:
+        args = remaining[:]
         resume = False
 
         # Consume -r / --resume before one-shot detection.

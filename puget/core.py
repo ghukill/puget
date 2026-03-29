@@ -100,7 +100,7 @@ def run(conn: sqlite3.Connection, wid: int, message: str) -> dict[str, Any]:
             name: str = tc["function"]["name"]
             arguments: dict[str, Any] = tc["function"]["arguments"]
 
-            err_console.print(f"[yellow]⚡ {name}:[/yellow] {_summarize(arguments)}")
+            err_console.print(f"[yellow]⚡ {name}:[/yellow] {_summarize(name, arguments)}")
             result_text = tools.execute(name, arguments)
             db.add_turn(conn, wid, "tool", result_text)
 
@@ -119,9 +119,20 @@ def run(conn: sqlite3.Connection, wid: int, message: str) -> dict[str, Any]:
     return response
 
 
-def _summarize(arguments: dict[str, Any]) -> str:
+def _summarize(name: str, arguments: dict[str, Any]) -> str:
     """One-line summary of tool arguments for stderr display."""
-    if "command" in arguments:
+    if name == "bash":
         cmd: str = arguments["command"]
         return cmd[:77] + "..." if len(cmd) > 80 else cmd
+    elif name == "read":
+        s = arguments["path"]
+        if arguments.get("offset"):
+            s += f" (from line {arguments['offset']})"
+        return s
+    elif name == "write":
+        return arguments["path"]
+    elif name == "edit":
+        n = len(arguments["edits"]) if "edits" in arguments else 1
+        plural = "edit" if n == 1 else "edits"
+        return f"{arguments['path']} ({n} {plural})"
     return str(arguments)

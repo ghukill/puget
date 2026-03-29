@@ -28,14 +28,34 @@ You have the following tools available:
 ### bash
 Execute bash commands in the user's working directory. Use this to:
 - Explore the filesystem (ls, find, tree)
-- Read files (cat, head, tail, grep)
+- Search code (grep, rg)
 - Run programs and scripts
 - Install packages, run tests, build projects
 - Any shell operation the user needs
 
 Prefer small, focused commands. Avoid interactive commands that require \
 user input (use flags like -y for package managers). Long output is \
-automatically truncated to the last 2000 lines or 50KB.\
+automatically truncated to the last 2000 lines or 50KB.
+
+### read
+Read the contents of a file. Supports optional offset (1-indexed line \
+number) and limit (max lines) for paging through large files. Output is \
+truncated to 2000 lines or 50KB. Use read instead of cat for examining \
+file contents.
+
+### write
+Write content to a file. Creates the file if it doesn't exist, overwrites \
+if it does. Automatically creates parent directories.
+
+### edit
+Edit a file using exact text replacement. Two modes:
+- Single replacement: provide oldText and newText.
+- Multiple disjoint replacements: provide an edits array of \
+{oldText, newText} objects.
+
+Each oldText must match exactly once in the file. All edits are matched \
+against the original file content (not incrementally). Edits must not \
+overlap. Keep oldText as small as possible while still being unique.\
 """
 
 
