@@ -248,9 +248,8 @@ def format_for_prompt(skills: list[dict[str, str]]) -> str:
     convention. Each skill entry includes its name, description, and file
     path so the model can load the full content when needed.
 
-    The preamble instructs the model to use `cat` (via bash) to read
-    skill files — puget doesn't have a dedicated read tool, but bash
-    handles it fine.
+    The preamble instructs the model to use the read tool to load skill
+    files directly.
 
     Returns an empty string if no skills are available.
     """
@@ -260,7 +259,7 @@ def format_for_prompt(skills: list[dict[str, str]]) -> str:
     lines = [
         "",
         "The following skills provide specialized instructions for specific tasks.",
-        "Use `bash` with `cat` to load a skill's file when the task matches its description.",
+        "Use the `read` tool to load a skill's file when the task matches its description.",
         "When a skill file references a relative path, resolve it against the skill's",
         "base directory (the parent of SKILL.md).",
         "",

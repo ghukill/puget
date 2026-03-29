@@ -10,3 +10,7 @@ layer stack:
 3. `./.puget/skills/` — project-specific skills
 
 Each trait layer can add skills. Project overrides global, global overrides system.
+
+Bundled system skills:
+
+- `puget-understanding-self/` — high-level self-understanding guide for puget's tools, state, skills, and reflective analysis.

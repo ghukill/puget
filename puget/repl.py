@@ -11,6 +11,7 @@ for run() to complete and prompts for the next input.
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import Completer, Completion
+from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
 from rich.rule import Rule
@@ -61,11 +62,15 @@ def run_repl(*, resume: bool = False):
     kb = _build_key_bindings()
     skills = discover()
     completer = _SlashCompleter(skills=skills)
+    def _bottom_toolbar():
+        return HTML(f'<style bg="" fg="gray"> model: {get_model()} </style>')
+
     session = PromptSession(
         key_bindings=kb,
         multiline=True,
         completer=completer,
         complete_while_typing=False,
+        bottom_toolbar=_bottom_toolbar,
     )
 
     while True:

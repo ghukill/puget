@@ -190,4 +190,6 @@ def _summarize(name: str, arguments: dict[str, Any]) -> str:
         n = len(arguments["edits"]) if "edits" in arguments else 1
         plural = "edit" if n == 1 else "edits"
         return f"{arguments['path']} ({n} {plural})"
+    elif name == "config":
+        return "(snapshot)"
     return str(arguments)

@@ -1,6 +1,6 @@
 """Built-in tools for puget.
 
-The foundational four: bash, read, write, edit.
+The foundational five: bash, read, write, edit, config.
 """
 
 import os
@@ -149,6 +149,23 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "config",
+            "description": (
+                "Return puget's resolved runtime configuration as JSON. "
+                "Includes concrete paths (home, database, skill dirs), "
+                "active model, current wave ID and turn count, and all "
+                "settings. Use this instead of guessing paths or checking "
+                "environment variables."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+            },
+        },
+    },
 ]
 
 
@@ -179,8 +196,18 @@ def execute(name: str, arguments: dict[str, Any]) -> str:
             new_text=arguments.get("newText"),
             edits=arguments.get("edits"),
         )
+    elif name == "config":
+        return _config()
     else:
         return f"Unknown tool: {name}"
+
+
+# -- Config tool -------------------------------------------------------------
+
+def _config() -> str:
+    """Return puget's resolved runtime configuration as JSON."""
+    from puget.config import snapshot_json
+    return snapshot_json()
 
 
 # -- Bash tool ---------------------------------------------------------------
