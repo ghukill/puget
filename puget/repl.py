@@ -16,7 +16,7 @@ from prompt_toolkit.keys import Keys
 from rich.rule import Rule
 
 from puget import core, db
-from puget.model import get_model
+from puget.model import get_model, set_model
 from puget.output import console, print_log, set_show_thinking, show_thinking
 from puget.skills import discover
 
@@ -96,6 +96,9 @@ def run_repl(*, resume: bool = False):
             elif cmd.startswith("/thinking"):
                 _handle_thinking_cmd(cmd)
                 continue
+            elif cmd.startswith("/model"):
+                _handle_model_cmd(cmd)
+                continue
             elif cmd == "/help":
                 _print_help()
                 continue
@@ -138,6 +141,7 @@ def _build_key_bindings():
 _SLASH_COMMANDS = {
     "/help": "show available commands",
     "/log": "print wave history",
+    "/model": "show or switch the active model",
     "/new": "start a new wave",
     "/quit": "exit",
     "/thinking": "toggle model thinking display",
@@ -222,13 +226,26 @@ def _handle_thinking_cmd(cmd: str) -> None:
         console.print("[dim]Usage: /thinking [on|off][/dim]")
 
 
+def _handle_model_cmd(cmd: str) -> None:
+    """Handle /model [name] command."""
+    parts = cmd.split(None, 1)
+    if len(parts) == 1:
+        # Just "/model" — show current model.
+        console.print(f"[dim]model: {get_model()}[/dim]")
+    else:
+        name = parts[1].strip()
+        set_model(name)
+        console.print(f"[dim]model: {get_model()}[/dim]")
+
+
 def _print_help():
     """Print available REPL commands."""
     console.print()
     console.print("[bold]Commands:[/bold]")
-    console.print("  /new            — start a new wave")
-    console.print("  /log            — print wave history")
-    console.print("  /thinking on|off — toggle model thinking display")
-    console.print("  /help           — show this help")
-    console.print("  /quit           — exit")
+    console.print("  /new              — start a new wave")
+    console.print("  /log              — print wave history")
+    console.print("  /model [name]     — show or switch the active model")
+    console.print("  /thinking on|off  — toggle model thinking display")
+    console.print("  /help             — show this help")
+    console.print("  /quit             — exit")
     console.print()

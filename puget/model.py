@@ -18,10 +18,28 @@ DEFAULT_MODEL = "minimax-m2.7:cloud"
 # Timeout: None means no read timeout (large model responses can be slow).
 _TIMEOUT = httpx.Timeout(connect=10, read=None, write=10, pool=10)
 
+# Runtime model override. When set, takes precedence over the env var.
+_model_override: str | None = None
+
 
 def get_model() -> str:
-    """Return the model name from $PUGET_OLLAMA_MODEL or the default."""
+    """Return the active model name.
+
+    Priority: set_model() override > $PUGET_OLLAMA_MODEL > DEFAULT_MODEL.
+    """
+    if _model_override is not None:
+        return _model_override
     return os.environ.get("PUGET_OLLAMA_MODEL", DEFAULT_MODEL)
+
+
+def set_model(name: str | None) -> None:
+    """Set or clear the runtime model override.
+
+    Args:
+        name: Model name to use, or None to revert to env/default.
+    """
+    global _model_override
+    _model_override = name
 
 
 def _base_url() -> str:
