@@ -1,6 +1,6 @@
 """Tests for model selection and runtime override."""
 
-from puget.model import DEFAULT_MODEL, get_model, set_model
+from puget.model import DEFAULT_MODEL, _strip_chat_template_tokens, get_model, set_model
 
 
 class TestGetModel:
@@ -32,3 +32,17 @@ class TestGetModel:
 
         set_model(None)
         assert get_model() == "llama3:8b"
+
+
+class TestStripChatTemplateTokens:
+    def test_strips_qwen_tokens(self):
+        assert _strip_chat_template_tokens("hello <|im_start|>user") == "hello user"
+        assert _strip_chat_template_tokens("<|im_end|>") == ""
+
+    def test_strips_llama_tokens(self):
+        assert _strip_chat_template_tokens("<|start_header_id|>assistant<|end_header_id|>") == "assistant"
+        assert _strip_chat_template_tokens("done<|eot_id|>") == "done"
+
+    def test_leaves_clean_text_alone(self):
+        assert _strip_chat_template_tokens("just normal text") == "just normal text"
+        assert _strip_chat_template_tokens("") == ""

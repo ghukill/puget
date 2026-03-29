@@ -15,6 +15,10 @@ import httpx
 
 DEFAULT_MODEL = "minimax-m2.7:cloud"
 
+# Chat template tokens that models sometimes leak into content.
+# Qwen: <|im_start|>, <|im_end|>  Llama: <|start_header_id|>, <|end_header_id|>, <|eot_id|>
+_CHAT_TEMPLATE_RE = re.compile(r"<\|[a-z_]+\|>")
+
 # Timeout: None means no read timeout (large model responses can be slow).
 _TIMEOUT = httpx.Timeout(connect=10, read=None, write=10, pool=10)
 
@@ -107,6 +111,11 @@ def chat(
     if "</think>" in content:
         content = content.split("</think>", 1)[-1].strip()
 
+    # Strip leaked chat template tokens (e.g. <|im_start|>, <|end_header_id|>).
+    content = _strip_chat_template_tokens(content)
+    if thinking:
+        thinking = _strip_chat_template_tokens(thinking) or None
+
     # Preserve tool_calls exactly as returned — including id, index, etc.
     raw_tool_calls: list[dict[str, Any]] | None = msg.get("tool_calls") or None
 
@@ -116,3 +125,8 @@ def chat(
         "tool_calls": raw_tool_calls,
         "thinking": thinking,
     }
+
+
+def _strip_chat_template_tokens(text: str) -> str:
+    """Remove leaked chat template tokens from model output."""
+    return _CHAT_TEMPLATE_RE.sub("", text).strip()

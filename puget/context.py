@@ -17,6 +17,7 @@ from typing import Any
 
 
 EMERGENCY_CONTEXT_NOTE = "Prior context truncated due to request-size guard."
+TRUNCATION_NOTE = "Note: {dropped} older turns were truncated from this conversation to stay within context limits. You may be missing prior context."
 
 
 @dataclass(frozen=True)
@@ -57,7 +58,10 @@ def build_messages(
         history = _build_emergency_history(history, config)
         return [system, {"role": "system", "content": EMERGENCY_CONTEXT_NOTE}, *history]
 
-    history = _apply_hard_budget(history, config)
+    history, dropped = _apply_hard_budget(history, config)
+    if dropped:
+        note = {"role": "system", "content": TRUNCATION_NOTE.format(dropped=dropped)}
+        return [system, note, *history]
     return [system, *history]
 
 
@@ -166,15 +170,22 @@ def _build_emergency_history(
         emergency_turns=config.emergency_turns,
         max_400_retries=config.max_400_retries,
     )
-    return _apply_hard_budget(reduced, emergency_cfg)
+    reduced, _ = _apply_hard_budget(reduced, emergency_cfg)
+    return reduced
 
 
 def _apply_hard_budget(
     history: list[dict[str, Any]],
     config: ContextConfig,
-) -> list[dict[str, Any]]:
-    """Apply tool truncation, turn cap, and total-char cap to history."""
+) -> tuple[list[dict[str, Any]], int]:
+    """Apply tool truncation, turn cap, and total-char cap to history.
+
+    Returns:
+        A tuple of (messages, dropped_count) where dropped_count is the
+        number of turns removed from history.
+    """
     messages = [_truncate_tool_message(m, config.max_tool_chars) for m in history]
+    original_count = len(messages)
 
     protected_user_idx = _latest_user_index(messages)
 
@@ -202,7 +213,7 @@ def _apply_hard_budget(
             elif idx == protected_user_idx:
                 protected_user_idx = None
 
-    return messages
+    return messages, original_count - len(messages)
 
 
 def _pick_drop_index(
