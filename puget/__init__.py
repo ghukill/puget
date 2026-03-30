@@ -13,6 +13,8 @@ Environment variables:
                       precedence over PUGET_HOME for the DB location.
   PUGET_SHOW_THINKING If "true", display model thinking/reasoning blocks
                       instead of silently stripping them.
+  PUGET_OLLAMA_THINK  Thinking policy for Ollama requests: off, low, on,
+                      or auto (default: auto).
 """
 
 import os

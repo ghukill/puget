@@ -17,7 +17,14 @@ from prompt_toolkit.keys import Keys
 from rich.rule import Rule
 
 from puget import core, db
-from puget.model import get_model, list_available_models, set_model
+from puget.model import (
+    get_model,
+    get_model_info,
+    get_thinking_mode,
+    list_available_models,
+    set_model,
+    set_thinking_mode,
+)
 from puget.output import console, print_log, set_show_thinking, show_thinking
 from puget.skills import discover
 
@@ -33,7 +40,7 @@ def run_repl(*, resume: bool = False):
     Slash commands:
       /new            — start a new wave
       /log            — print wave history
-      /thinking on|off — toggle display of model thinking
+      /thinking off|low|on|auto — set the thinking policy
       /help           — show available commands
       /quit           — exit
     """
@@ -54,9 +61,8 @@ def run_repl(*, resume: bool = False):
     console.print()
     label = f"resuming wave #{wid}" if resuming else "new wave"
     console.print(Rule(f"[bold]puget[/bold]  [dim]model: {model_name} • {label}[/dim]"))
-    thinking_status = "on" if show_thinking() else "off"
     console.print("[dim]  Enter sends • Esc+Enter for newline • /new /log /thinking /quit[/dim]")
-    console.print(f"[dim]  thinking: {thinking_status}[/dim]")
+    console.print(f"[dim]  {_thinking_status_text()}[/dim]")
     console.print()
 
     kb = _build_key_bindings()
@@ -86,25 +92,25 @@ def run_repl(*, resume: bool = False):
 
         # Slash commands.
         if text.startswith("/"):
-            cmd = text.lower()
-            if cmd in ("/quit", "/exit", "/q"):
+            lowered = text.lower()
+            if lowered in ("/quit", "/exit", "/q"):
                 console.print("[dim]Goodbye![/dim]")
                 break
-            elif cmd == "/new":
+            elif lowered == "/new":
                 wid = db.new_wave(conn)
                 console.print(f"[dim]New wave (id: {wid})[/dim]")
                 continue
-            elif cmd == "/log":
+            elif lowered == "/log":
                 turns = db.get_turns(conn, wid)
                 print_log(turns)
                 continue
-            elif cmd.startswith("/thinking"):
-                _handle_thinking_cmd(cmd)
+            elif lowered.startswith("/thinking"):
+                _handle_thinking_cmd(text)
                 continue
-            elif cmd.startswith("/model"):
-                _handle_model_cmd(cmd)
+            elif lowered.startswith("/model"):
+                _handle_model_cmd(text)
                 continue
-            elif cmd == "/help":
+            elif lowered == "/help":
                 _print_help()
                 continue
             # Unrecognized slash command — treat as a normal message.
@@ -150,12 +156,14 @@ _SLASH_COMMANDS = {
     "/model": "show models or switch the active model",
     "/new": "start a new wave",
     "/quit": "exit",
-    "/thinking": "toggle model thinking display",
+    "/thinking": "set the model thinking policy",
 }
 
 _THINKING_ARGS = {
-    "on": "enable thinking display",
-    "off": "disable thinking display",
+    "off": "disable Ollama thinking for normal chat turns",
+    "low": "request low thinking for normal chat turns",
+    "on": "request full thinking for normal chat turns",
+    "auto": "chat off, internal summarization low",
 }
 
 
@@ -236,21 +244,28 @@ class _SlashCompleter(Completer):
 # -- Slash command handlers --------------------------------------------------
 
 
+def _thinking_status_text() -> str:
+    """Return a compact status line for thinking policy + display."""
+    display = "on" if show_thinking() else "off"
+    return f"thinking: {get_thinking_mode()} • display: {display}"
+
+
+
 def _handle_thinking_cmd(cmd: str) -> None:
-    """Handle /thinking [on|off] command."""
+    """Handle /thinking [off|low|on|auto] command."""
     parts = cmd.split()
     if len(parts) == 1:
-        # Just "/thinking" — show current status.
-        status = "on" if show_thinking() else "off"
-        console.print(f"[dim]thinking: {status}[/dim]")
-    elif parts[1] == "on":
-        set_show_thinking(True)
-        console.print("[dim]thinking: on[/dim]")
-    elif parts[1] == "off":
-        set_show_thinking(False)
-        console.print("[dim]thinking: off[/dim]")
-    else:
-        console.print("[dim]Usage: /thinking [on|off][/dim]")
+        console.print(f"[dim]{_thinking_status_text()}[/dim]")
+        return
+
+    mode = parts[1].strip().lower()
+    if mode not in _THINKING_ARGS:
+        console.print("[dim]Usage: /thinking [off|low|on|auto][/dim]")
+        return
+
+    set_thinking_mode(mode)
+    set_show_thinking(mode != "off")
+    console.print(f"[dim]{_thinking_status_text()}[/dim]")
 
 
 def _handle_model_cmd(cmd: str) -> None:
@@ -261,7 +276,10 @@ def _handle_model_cmd(cmd: str) -> None:
     if len(parts) == 1:
         # Just "/model" — show current model plus selectable list.
         current = get_model()
+        info = get_model_info(current)
+        caps = ", ".join(info["capabilities"]) if info["capabilities"] else "unknown"
         console.print(f"[dim]model: {current}[/dim]")
+        console.print(f"[dim]capabilities: {caps} • context: {info['context_window']}[/dim]")
 
         if available:
             console.print("[dim]available models:[/dim]")
@@ -285,7 +303,10 @@ def _handle_model_cmd(cmd: str) -> None:
             return
 
     set_model(name)
+    info = get_model_info()
+    caps = ", ".join(info["capabilities"]) if info["capabilities"] else "unknown"
     console.print(f"[dim]model: {get_model()}[/dim]")
+    console.print(f"[dim]capabilities: {caps} • context: {info['context_window']}[/dim]")
 
 
 def _print_help():
@@ -295,7 +316,7 @@ def _print_help():
     console.print("  /new              — start a new wave")
     console.print("  /log              — print wave history")
     console.print("  /model [name|#]   — show models or switch the active model")
-    console.print("  /thinking on|off  — toggle model thinking display")
+    console.print("  /thinking [off|low|on|auto] — set the model thinking policy")
     console.print("  /help             — show this help")
     console.print("  /quit             — exit")
     console.print()

@@ -61,8 +61,12 @@ class TestSnapshot:
         assert "db_path" in snap
         assert "db_exists" in snap
         assert "model" in snap
+        assert "model_capabilities" in snap
+        assert "model_capabilities_known" in snap
+        assert "context_window" in snap
         assert "ollama_host" in snap
         assert "show_thinking" in snap
+        assert "thinking_mode" in snap
         assert "cwd" in snap
         assert "skill_dirs" in snap
         assert "current_wave_id" in snap

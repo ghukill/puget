@@ -68,6 +68,18 @@ def show_thinking() -> bool:
     return _show_thinking()
 
 
+def thinking_mode() -> str:
+    """Return puget's active Ollama thinking policy."""
+    from puget.model import get_thinking_mode
+    return get_thinking_mode()
+
+
+def model_info() -> dict[str, Any]:
+    """Return active-model metadata resolved from Ollama."""
+    from puget.model import get_model_info
+    return get_model_info()
+
+
 def current_wave_id() -> int | None:
     """Return the current (most recent) wave ID, or None.
 
@@ -120,13 +132,19 @@ def snapshot() -> dict[str, Any]:
     db = db_path()
     wid = current_wave_id()
 
+    info = model_info()
+
     result: dict[str, Any] = {
         "puget_home": str(home),
         "db_path": str(db),
         "db_exists": db.is_file(),
         "model": model_name(),
+        "model_capabilities": info["capabilities"],
+        "model_capabilities_known": info["capabilities_known"],
+        "context_window": info["context_window"],
         "ollama_host": ollama_host(),
         "show_thinking": show_thinking(),
+        "thinking_mode": thinking_mode(),
         "cwd": os.getcwd(),
         "skill_dirs": skill_dirs(),
         "current_wave_id": wid,

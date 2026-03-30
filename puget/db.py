@@ -3,7 +3,7 @@
 The database is the entire state of puget. No hidden config, no daemon,
 no lock files. `sqlite3 $PUGET_HOME/puget.db` is your debugger.
 
-Two tables:
+Three tables:
 
   waves  — A wave is a unit of work or discussion. Named for the Puget
            Sound. Each wave has an optional label; if unlabeled, the first
@@ -14,6 +14,11 @@ Two tables:
            tool_calls JSON column for assistant turns that request tools.
            Content is always plain text — tool call structure lives in its
            own column, never smuggled into content as a JSON blob.
+
+  compactions — Context compaction checkpoints. Each compaction stores a
+           structured summary of older turns plus the ID of the first turn
+           that was kept (not summarized). When building model context,
+           the summary replaces all turns before first_kept_turn_id.
 """
 
 import os
@@ -72,6 +77,15 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             tool_calls TEXT,
             created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
         );
+        CREATE TABLE IF NOT EXISTS compactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            wave_id INTEGER NOT NULL REFERENCES waves(id),
+            summary TEXT NOT NULL,
+            first_kept_turn_id INTEGER NOT NULL REFERENCES turns(id),
+            tokens_before INTEGER NOT NULL,
+            details_json TEXT,
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+        );
     """)
 
 
@@ -119,7 +133,7 @@ def wave_preview(conn: sqlite3.Connection, wave_id: int, max_chars: int = 250) -
     if row and row["label"]:
         label: str = row["label"]
         if len(label) > max_chars:
-            return label[:max_chars] + "…"
+            return label[:max_chars] + "\u2026"
         return label
 
     # Fall back to first user message.
@@ -132,7 +146,7 @@ def wave_preview(conn: sqlite3.Connection, wave_id: int, max_chars: int = 250) -
         return "(empty)"
     content: str = row["content"]
     if len(content) > max_chars:
-        return content[:max_chars] + "…"
+        return content[:max_chars] + "\u2026"
     return content
 
 
@@ -165,12 +179,34 @@ def add_turn(
 def get_turns(conn: sqlite3.Connection, wave_id: int) -> list[dict[str, Any]]:
     """Get all turns in a wave, ordered chronologically.
 
-    Returns a list of dicts with keys: role, content, tool_calls, created_at.
+    Returns a list of dicts with keys: id, role, content, tool_calls,
+    created_at. The id is included so compaction can reference specific
+    turn boundaries.
     """
     rows = conn.execute(
-        "SELECT role, content, tool_calls, created_at FROM turns "
+        "SELECT id, role, content, tool_calls, created_at FROM turns "
         "WHERE wave_id = ? ORDER BY id",
         (wave_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_turns_from(
+    conn: sqlite3.Connection,
+    wave_id: int,
+    from_turn_id: int,
+) -> list[dict[str, Any]]:
+    """Get turns in a wave starting from a specific turn ID.
+
+    Used after compaction to load only the kept (non-summarized) turns.
+
+    Returns a list of dicts with keys: id, role, content, tool_calls,
+    created_at.
+    """
+    rows = conn.execute(
+        "SELECT id, role, content, tool_calls, created_at FROM turns "
+        "WHERE wave_id = ? AND id >= ? ORDER BY id",
+        (wave_id, from_turn_id),
     ).fetchall()
     return [dict(r) for r in rows]
 
@@ -188,6 +224,55 @@ def last_assistant_turn(conn: sqlite3.Connection, wave_id: int) -> dict[str, Any
     return dict(row) if row else None
 
 
+# -- Compactions -------------------------------------------------------------
+
+def add_compaction(
+    conn: sqlite3.Connection,
+    wave_id: int,
+    summary: str,
+    first_kept_turn_id: int,
+    tokens_before: int,
+    details_json: str | None = None,
+) -> None:
+    """Store a compaction checkpoint for a wave.
+
+    Args:
+        conn: SQLite connection.
+        wave_id: The wave this compaction belongs to.
+        summary: Structured summary of the compacted turns.
+        first_kept_turn_id: ID of the first turn NOT summarized.
+        tokens_before: Estimated context tokens before compaction.
+        details_json: Optional JSON with file operation details.
+    """
+    conn.execute(
+        "INSERT INTO compactions "
+        "(wave_id, summary, first_kept_turn_id, tokens_before, details_json) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (wave_id, summary, first_kept_turn_id, tokens_before, details_json),
+    )
+    conn.commit()
+
+
+def latest_compaction(
+    conn: sqlite3.Connection,
+    wave_id: int,
+) -> dict[str, Any] | None:
+    """Get the most recent compaction for a wave, or None.
+
+    Returns a dict with keys: id, summary, first_kept_turn_id,
+    tokens_before, details_json, created_at.
+    """
+    row = conn.execute(
+        "SELECT id, summary, first_kept_turn_id, tokens_before, "
+        "details_json, created_at "
+        "FROM compactions WHERE wave_id = ? ORDER BY id DESC LIMIT 1",
+        (wave_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+# -- Messages for model ------------------------------------------------------
+
 def messages_for_model(
     conn: sqlite3.Connection,
     wave_id: int,
@@ -196,8 +281,12 @@ def messages_for_model(
 ) -> list[dict[str, Any]]:
     """Build context-bounded model messages for a wave.
 
-    Includes the dynamic system message, reconstructs turn messages, and
-    enforces request-size guardrails via puget.context.
+    When a compaction exists, only turns from first_kept_turn_id onwards
+    are included, preceded by the compaction summary. This replaces the
+    old approach of silently dropping turns.
+
+    In emergency mode, compaction's kept turns are used but the summary
+    is omitted to minimize payload size.
 
     Args:
         conn: SQLite connection.
@@ -207,8 +296,22 @@ def messages_for_model(
     Returns:
         Message list ready for model.chat().
     """
-    from puget.context import build_messages
+    from puget import model
+    from puget.context import build_messages, config_for_context_window
     from puget.prompt import system_message
 
+    config = config_for_context_window(model.get_context_window())
+    compaction = latest_compaction(conn, wave_id)
+
+    if compaction:
+        turns = get_turns_from(conn, wave_id, compaction["first_kept_turn_id"])
+        if emergency:
+            return build_messages(system_message(), turns, config=config, emergency=True)
+        return build_messages(
+            system_message(), turns,
+            config=config,
+            compaction_summary=compaction["summary"],
+        )
+
     turns = get_turns(conn, wave_id)
-    return build_messages(system_message(), turns, emergency=emergency)
+    return build_messages(system_message(), turns, config=config, emergency=emergency)

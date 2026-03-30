@@ -12,6 +12,17 @@ This module contains the two fundamental operations:
 
 Everything else in puget — the CLI, the REPL, the one-shot mode — is built
 on top of these two functions.
+
+Context management:
+
+  Before every model call, turn() runs proactive compaction. If the
+  estimated context tokens approach the model's context window, puget
+  generates a structured summary of older turns via the model and stores
+  it in the compactions table. Subsequent model calls see the summary
+  plus only the recent (kept) turns.
+
+  Emergency mode and auto-forking remain as fallback safety nets for
+  when compaction alone isn't enough (e.g. a single turn is enormous).
 """
 
 import json
@@ -28,11 +39,12 @@ def turn(conn: sqlite3.Connection, wid: int, message: str | None = None) -> dict
     """Execute a single turn in a wave.
 
     This is the primitive that everything else builds on. It does exactly
-    three things:
+    four things:
 
       1. If message is provided, store it as a user turn.
-      2. Send context-bounded wave history to the model.
-      3. Store and return the model's response.
+      2. Run proactive compaction if context is approaching the limit.
+      3. Send context-bounded wave history to the model.
+      4. Store and return the model's response.
 
     If the model request fails with HTTP 400 (request too large), turn()
     retries once in emergency context mode. If that also fails with 400,
@@ -54,6 +66,10 @@ def turn(conn: sqlite3.Connection, wid: int, message: str | None = None) -> dict
     """
     if message is not None:
         db.add_turn(conn, wid, "user", message)
+
+    # Proactive compaction — summarize older turns before the model call
+    # so the payload stays within the context window.
+    _maybe_compact(conn, wid)
 
     response, active_wid = _chat_with_size_recovery(conn, wid)
 
@@ -81,7 +97,7 @@ def run(conn: sqlite3.Connection, wid: int, message: str) -> dict[str, Any]:
       4. Repeats until the model responds with plain text.
 
     Output is rendered as it goes:
-      - Tool call summaries (⚡ bash: ...) go to stderr.
+      - Tool call summaries go to stderr.
       - Assistant text responses are rendered as markdown to stdout.
 
     Args:
@@ -110,7 +126,7 @@ def run(conn: sqlite3.Connection, wid: int, message: str) -> dict[str, Any]:
             name: str = tc["function"]["name"]
             arguments: dict[str, Any] = tc["function"]["arguments"]
 
-            err_console.print(f"[yellow]⚡ {name}:[/yellow] {_summarize(name, arguments)}")
+            err_console.print(f"[yellow]\u26a1 {name}:[/yellow] {_summarize(name, arguments)}")
             result_text = tools.execute(name, arguments)
             db.add_turn(conn, active_wid, "tool", result_text)
 
@@ -130,6 +146,80 @@ def run(conn: sqlite3.Connection, wid: int, message: str) -> dict[str, Any]:
     response["wave_id"] = active_wid
     return response
 
+
+# ---------------------------------------------------------------------------
+# Proactive compaction
+# ---------------------------------------------------------------------------
+
+def _maybe_compact(conn: sqlite3.Connection, wid: int) -> None:
+    """Run compaction if the estimated context exceeds the threshold.
+
+    This is called before every model call in turn(). It estimates the
+    current context size and, if it's approaching the context window
+    limit, generates a structured summary of older turns via the model.
+
+    Compaction failure is non-fatal — if the summarization call fails,
+    we log and continue. The emergency/fork mechanism in
+    _chat_with_size_recovery will handle the situation if the payload
+    is actually too large.
+    """
+    from puget.prompt import system_message
+
+    config = context.config_for_context_window(model.get_context_window())
+    compaction = db.latest_compaction(conn, wid)
+
+    # Determine which turns the model would see.
+    if compaction:
+        turns = db.get_turns_from(conn, wid, compaction["first_kept_turn_id"])
+        summary = compaction["summary"]
+    else:
+        turns = db.get_turns(conn, wid)
+        summary = None
+
+    sys_content = system_message()["content"]
+    estimated = context.estimate_context_tokens(sys_content, turns, summary)
+
+    if not context.should_compact(estimated, config):
+        return
+
+    # Need all turns for compaction preparation (to find file ops, etc.).
+    all_turns = db.get_turns(conn, wid)
+    preparation = context.prepare_compaction(
+        all_turns, sys_content, compaction, config,
+    )
+    if preparation is None:
+        return
+
+    err_console.print("[dim]Compacting context\u2026[/dim]")
+
+    try:
+        messages = context.build_summarization_messages(preparation)
+        raw_summary = model.complete(messages)
+        final_summary = context.finalize_summary(raw_summary, preparation)
+
+        details = json.dumps({
+            "read_files": preparation.read_files,
+            "modified_files": preparation.modified_files,
+        })
+
+        db.add_compaction(
+            conn, wid,
+            summary=final_summary,
+            first_kept_turn_id=preparation.first_kept_turn_id,
+            tokens_before=preparation.tokens_before,
+            details_json=details,
+        )
+        err_console.print("[dim]Context compacted.[/dim]")
+
+    except Exception as exc:
+        err_console.print(
+            f"[dim]Compaction failed: {exc}. Continuing with full context.[/dim]"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Model call with size recovery
+# ---------------------------------------------------------------------------
 
 def _chat_with_size_recovery(
     conn: sqlite3.Connection,
@@ -173,6 +263,10 @@ def _fork_wave_after_400(conn: sqlite3.Connection, wid: int) -> int:
 
     return new_wid
 
+
+# ---------------------------------------------------------------------------
+# Display helpers
+# ---------------------------------------------------------------------------
 
 def _summarize(name: str, arguments: dict[str, Any]) -> str:
     """One-line summary of tool arguments for stderr display."""

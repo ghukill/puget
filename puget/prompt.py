@@ -8,6 +8,7 @@ never full content. The model loads skill details on demand.
 
 from typing import Any
 
+from puget.model import get_model_info
 from puget.skills import discover, format_for_prompt
 
 SYSTEM_PROMPT = """\
@@ -78,13 +79,45 @@ paths or checking environment variables.\
 """
 
 
+def _active_model_note() -> str:
+    """Describe the active model's relevant Ollama capabilities."""
+    info = get_model_info()
+    capabilities = ", ".join(info["capabilities"]) if info["capabilities"] else "unknown"
+
+    lines = [
+        "## Active model",
+        f"- Model: {info['model']}",
+        f"- Context window: {info['context_window']} tokens",
+        f"- Ollama capabilities: {capabilities}",
+    ]
+
+    if info["capabilities_known"] and not info["supports_tools"]:
+        lines.append(
+            "- IMPORTANT: this model does not support Ollama tool calling. "
+            "Do not request or emit tool calls; answer in plain text only."
+        )
+
+    thinking_mode = info["thinking_mode"]
+    if info["capabilities_known"] and not info["supports_thinking"]:
+        lines.append("- Native thinking blocks are unavailable on this model.")
+    elif thinking_mode == "auto":
+        lines.append(
+            "- Thinking mode: auto. Normal chat turns usually run with thinking off; "
+            "internal summarization may use low thinking."
+        )
+    else:
+        lines.append(f"- Thinking mode for normal chat turns: {thinking_mode}.")
+
+    return "\n".join(lines)
+
+
 def system_message() -> dict[str, Any]:
     """Build the system message with dynamically discovered skills.
 
     The base prompt is static. Skills are discovered fresh on each call
     so newly added skills are picked up without restarting puget.
     """
-    prompt = SYSTEM_PROMPT
+    prompt = SYSTEM_PROMPT + "\n\n" + _active_model_note()
 
     skills = discover()
     skills_section = format_for_prompt(skills)
