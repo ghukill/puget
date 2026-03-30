@@ -46,6 +46,38 @@ def set_model(name: str | None) -> None:
     _model_override = name
 
 
+def list_available_models() -> list[str]:
+    """Return locally available Ollama model names.
+
+    Uses the official ollama Python SDK for model discovery. Returns an
+    empty list if the API is unreachable or the SDK response format is
+    unexpected.
+    """
+    try:
+        import ollama
+
+        client = ollama.Client(host=_base_url())
+        response = client.list()
+    except Exception:
+        return []
+
+    models = response.get("models") if isinstance(response, dict) else getattr(response, "models", None)
+    if not models:
+        return []
+
+    names: list[str] = []
+    for model in models:
+        if isinstance(model, dict):
+            name = model.get("model") or model.get("name")
+        else:
+            name = getattr(model, "model", None) or getattr(model, "name", None)
+
+        if isinstance(name, str) and name:
+            names.append(name)
+
+    return sorted(set(names))
+
+
 def _base_url() -> str:
     """Resolve the Ollama base URL.
 

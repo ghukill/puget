@@ -17,7 +17,7 @@ from prompt_toolkit.keys import Keys
 from rich.rule import Rule
 
 from puget import core, db
-from puget.model import get_model, set_model
+from puget.model import get_model, list_available_models, set_model
 from puget.output import console, print_log, set_show_thinking, show_thinking
 from puget.skills import discover
 
@@ -147,7 +147,7 @@ def _build_key_bindings():
 _SLASH_COMMANDS = {
     "/help": "show available commands",
     "/log": "print wave history",
-    "/model": "show or switch the active model",
+    "/model": "show models or switch the active model",
     "/new": "start a new wave",
     "/quit": "exit",
     "/thinking": "toggle model thinking display",
@@ -170,6 +170,13 @@ class _SlashCompleter(Completer):
 
     def __init__(self, skills: list[dict[str, str]] | None = None):
         self._skills = skills or []
+        self._model_names: list[str] | None = None
+
+    def _get_model_names(self) -> list[str]:
+        """Load and cache model names for /model completion."""
+        if self._model_names is None:
+            self._model_names = list_available_models()
+        return self._model_names
 
     def get_completions(self, document, complete_event):
         text = document.text_before_cursor
@@ -190,6 +197,20 @@ class _SlashCompleter(Completer):
             for arg, desc in _THINKING_ARGS.items():
                 if arg.startswith(prefix):
                     yield Completion(arg, start_position=-len(prefix), display_meta=desc)
+            return
+
+        # Sub-argument completion: "/model <name>"
+        if parts[0] == "/model":
+            if len(parts) == 2:
+                prefix = parts[1]
+            elif len(parts) == 1 and text.endswith(" "):
+                prefix = ""
+            else:
+                return
+
+            for name in self._get_model_names():
+                if name.startswith(prefix):
+                    yield Completion(name, start_position=-len(prefix), display_meta="available model")
             return
 
         # Top-level: complete the slash command itself.
@@ -233,15 +254,38 @@ def _handle_thinking_cmd(cmd: str) -> None:
 
 
 def _handle_model_cmd(cmd: str) -> None:
-    """Handle /model [name] command."""
+    """Handle /model [name|number] command."""
     parts = cmd.split(None, 1)
+    available = list_available_models()
+
     if len(parts) == 1:
-        # Just "/model" — show current model.
-        console.print(f"[dim]model: {get_model()}[/dim]")
-    else:
-        name = parts[1].strip()
-        set_model(name)
-        console.print(f"[dim]model: {get_model()}[/dim]")
+        # Just "/model" — show current model plus selectable list.
+        current = get_model()
+        console.print(f"[dim]model: {current}[/dim]")
+
+        if available:
+            console.print("[dim]available models:[/dim]")
+            for i, name in enumerate(available, start=1):
+                active = " (active)" if name == current else ""
+                console.print(f"[dim]  {i:>2}. {name}{active}[/dim]")
+            console.print("[dim]use /model <name|number> to switch[/dim]")
+        else:
+            console.print("[dim]no models discovered from Ollama[/dim]")
+        return
+
+    selection = parts[1].strip()
+    name = selection
+
+    if selection.isdigit() and available:
+        idx = int(selection)
+        if 1 <= idx <= len(available):
+            name = available[idx - 1]
+        else:
+            console.print(f"[dim]invalid model number: {selection}[/dim]")
+            return
+
+    set_model(name)
+    console.print(f"[dim]model: {get_model()}[/dim]")
 
 
 def _print_help():
@@ -250,7 +294,7 @@ def _print_help():
     console.print("[bold]Commands:[/bold]")
     console.print("  /new              — start a new wave")
     console.print("  /log              — print wave history")
-    console.print("  /model [name]     — show or switch the active model")
+    console.print("  /model [name|#]   — show models or switch the active model")
     console.print("  /thinking on|off  — toggle model thinking display")
     console.print("  /help             — show this help")
     console.print("  /quit             — exit")

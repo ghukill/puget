@@ -1,6 +1,14 @@
 """Tests for model selection and runtime override."""
 
-from puget.model import DEFAULT_MODEL, _strip_chat_template_tokens, get_model, set_model
+from types import SimpleNamespace
+
+from puget.model import (
+    DEFAULT_MODEL,
+    _strip_chat_template_tokens,
+    get_model,
+    list_available_models,
+    set_model,
+)
 
 
 class TestGetModel:
@@ -32,6 +40,61 @@ class TestGetModel:
 
         set_model(None)
         assert get_model() == "llama3:8b"
+
+
+class TestListAvailableModels:
+    def test_parses_dict_response(self, monkeypatch):
+        class FakeClient:
+            def __init__(self, host):
+                self.host = host
+
+            def list(self):
+                return {
+                    "models": [
+                        {"model": "llama3:8b"},
+                        {"name": "qwen3:14b"},
+                        {"model": "llama3:8b"},
+                    ]
+                }
+
+        fake_ollama = SimpleNamespace(Client=FakeClient)
+        monkeypatch.setitem(__import__("sys").modules, "ollama", fake_ollama)
+
+        assert list_available_models() == ["llama3:8b", "qwen3:14b"]
+
+    def test_parses_object_response(self, monkeypatch):
+        class FakeModel:
+            def __init__(self, name):
+                self.name = name
+
+        class FakeResponse:
+            def __init__(self):
+                self.models = [FakeModel("gemma3:27b")]
+
+        class FakeClient:
+            def __init__(self, host):
+                self.host = host
+
+            def list(self):
+                return FakeResponse()
+
+        fake_ollama = SimpleNamespace(Client=FakeClient)
+        monkeypatch.setitem(__import__("sys").modules, "ollama", fake_ollama)
+
+        assert list_available_models() == ["gemma3:27b"]
+
+    def test_returns_empty_list_on_error(self, monkeypatch):
+        class FakeClient:
+            def __init__(self, host):
+                self.host = host
+
+            def list(self):
+                raise RuntimeError("boom")
+
+        fake_ollama = SimpleNamespace(Client=FakeClient)
+        monkeypatch.setitem(__import__("sys").modules, "ollama", fake_ollama)
+
+        assert list_available_models() == []
 
 
 class TestStripChatTemplateTokens:
