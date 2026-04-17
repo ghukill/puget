@@ -20,8 +20,10 @@ from puget import core, db
 from puget.model import (
     get_model,
     get_model_info,
+    get_ollama_host,
     get_thinking_mode,
     list_available_models,
+    ping_ollama,
     set_model,
     set_thinking_mode,
 )
@@ -65,12 +67,19 @@ def run_repl(*, resume: bool = False, wave_id: int | None = None):
         wid = db.new_wave(conn)
 
     model_name = get_model()
+    ollama_host = get_ollama_host()
+    reachable, ping_msg = ping_ollama()
 
     console.print()
     label = f"resuming wave #{wid}" if resuming else "new wave"
     console.print(Rule(f"[bold]puget[/bold]  [dim]model: {model_name} • {label}[/dim]"))
+    console.print(f"[dim]  ollama: {ollama_host} • model: {model_name}[/dim]")
     console.print("[dim]  Enter sends • Esc+Enter for newline • /new /resume /log /thinking /quit[/dim]")
     console.print(f"[dim]  {_thinking_status_text()}[/dim]")
+    if reachable:
+        console.print(f"[dim]  server: ok (v{ping_msg})[/dim]")
+    else:
+        console.print(f"[dim red]  server: unreachable ({ping_msg}) — puget requires a running Ollama instance (https://ollama.com/)[/dim red]")
     console.print()
 
     kb = _build_key_bindings()

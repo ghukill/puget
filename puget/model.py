@@ -175,6 +175,11 @@ def get_model_info(model_name: str | None = None) -> dict[str, Any]:
 
 
 
+def get_ollama_host() -> str:
+    """Return the resolved Ollama base URL (same logic as _base_url, but public)."""
+    return _base_url()
+
+
 def _base_url() -> str:
     """Resolve the Ollama base URL.
 
@@ -185,6 +190,29 @@ def _base_url() -> str:
     if not host.startswith(("http://", "https://")):
         host = f"http://{host}"
     return host.rstrip("/")
+
+
+def ping_ollama() -> tuple[bool, str]:
+    """Ping the Ollama server and return (reachable, message).
+
+    Uses a short timeout to avoid blocking startup. Returns a tuple:
+      - (True, version_string) if the server responded
+      - (False, error_description) if unreachable
+    """
+    url = f"{_base_url()}/api/version"
+    try:
+        resp = httpx.get(url, timeout=_METADATA_TIMEOUT)
+        if resp.status_code == 200:
+            data = resp.json()
+            version = data.get("version", "unknown")
+            return (True, version)
+        return (False, f"HTTP {resp.status_code}")
+    except httpx.ConnectError:
+        return (False, "connection refused")
+    except httpx.TimeoutException:
+        return (False, "timed out")
+    except Exception as exc:
+        return (False, str(exc))
 
 
 
