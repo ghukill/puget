@@ -126,7 +126,7 @@ def run(conn: sqlite3.Connection, wid: int, message: str) -> dict[str, Any]:
             name: str = tc["function"]["name"]
             arguments: dict[str, Any] = tc["function"]["arguments"]
 
-            err_console.print(f"[yellow]\u26a1 {name}:[/yellow] {_summarize(name, arguments)}")
+            _print_tool_call(name, arguments)
             result_text = tools.execute(name, arguments)
             db.add_turn(conn, active_wid, "tool", result_text)
 
@@ -268,22 +268,24 @@ def _fork_wave_after_400(conn: sqlite3.Connection, wid: int) -> int:
 # Display helpers
 # ---------------------------------------------------------------------------
 
-def _summarize(name: str, arguments: dict[str, Any]) -> str:
-    """One-line summary of tool arguments for stderr display."""
-    if name == "bash":
-        cmd: str = arguments["command"]
-        return cmd[:77] + "..." if len(cmd) > 80 else cmd
-    elif name == "read":
-        s = arguments["path"]
-        if arguments.get("offset"):
-            s += f" (from line {arguments['offset']})"
-        return s
-    elif name == "write":
-        return arguments["path"]
-    elif name == "edit":
-        n = len(arguments["edits"]) if "edits" in arguments else 1
-        plural = "edit" if n == 1 else "edits"
-        return f"{arguments['path']} ({n} {plural})"
-    elif name == "config":
-        return "(snapshot)"
-    return str(arguments)
+
+def _print_tool_call(name: str, arguments: dict[str, Any]) -> None:
+    """Render a tool call to stderr with preserved line breaks."""
+    from rich.syntax import Syntax
+
+    err_console.print(f"[bold yellow]\u26a1 {name}[/bold yellow]")
+
+    # Build a readable representation preserving real line breaks.
+    parts: list[str] = []
+    for key, val in arguments.items():
+        if isinstance(val, str) and "\n" in val:
+            # Multi-line string — show as a code block.
+            parts.append(f"{key}:\n{val}")
+        else:
+            parts.append(f"{key}: {json.dumps(val)}")
+
+    body = "\n".join(parts)
+    err_console.print(Syntax(body, "yaml", theme="monokai", line_numbers=False))
+    err_console.print()
+
+
