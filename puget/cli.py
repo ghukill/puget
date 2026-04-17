@@ -2,12 +2,13 @@
 
 Three modes of operation:
 
-  puget                    Interactive REPL. Resume or start a wave.
+  puget                    Interactive REPL. Start a new wave.
   puget "message"          One-shot: send a message, run to completion, exit.
   puget say "message"      Single-turn primitive (exit 0=text, 10=tool call).
 
 Utility commands:
 
+  puget resume [ID]        Resume a wave (most recent if no ID given).
   puget log                Print the current wave's history.
   puget new                Start a new wave.
   puget echo               Replay the last assistant response.
@@ -29,9 +30,8 @@ EXIT_ERROR = 1
 
 
 @click.group(invoke_without_command=True)
-@click.option("-r", "--resume", is_flag=True, help="Resume the most recent wave.")
 @click.pass_context
-def cli(ctx, resume):
+def cli(ctx):
     """puget — a CLI agent turn executor.
 
     Run with no arguments for the interactive REPL, or pass a message
@@ -40,13 +40,12 @@ def cli(ctx, resume):
     if ctx.invoked_subcommand is None:
         from puget.repl import run_repl
 
-        run_repl(resume=resume)
+        run_repl(resume=False)
 
 
 @cli.command()
 @click.argument("message")
-@click.option("-r", "--resume", is_flag=True, help="Resume the most recent wave.")
-def say(message, resume):
+def say(message):
     """Send a user message and get one model response.
 
     This is the single-turn primitive. It makes exactly one model call
@@ -60,7 +59,7 @@ def say(message, resume):
     """
     try:
         conn = db.connect()
-        wid = db.ensure_wave(conn) if resume else db.new_wave(conn)
+        wid = db.new_wave(conn)
 
         response = core.turn(conn, wid, message)
 
@@ -149,6 +148,44 @@ def new():
         conn = db.connect()
         wid = db.new_wave(conn)
         console.print(f"[dim]New wave started (id: {wid})[/dim]")
+    except Exception as e:
+        err_console.print(f"[bold red]Error:[/bold red] {e}")
+        sys.exit(EXIT_ERROR)
+
+
+@cli.command()
+@click.argument("wave_id", required=False, type=int)
+def resume(wave_id):
+    """Resume a wave in the interactive REPL.
+
+    With no WAVE_ID, resumes the most recent wave. With a specific ID,
+    resumes that wave.
+
+    \b
+      puget resume         resume the most recent wave
+      puget resume 42      resume wave 42
+    """
+    try:
+        conn = db.connect()
+        if wave_id is not None:
+            # Validate the wave exists.
+            row = conn.execute(
+                "SELECT id FROM waves WHERE id = ?", (wave_id,)
+            ).fetchone()
+            if row is None:
+                err_console.print(f"[bold red]Error:[/bold red] wave {wave_id} not found")
+                sys.exit(EXIT_ERROR)
+            wid = wave_id
+        else:
+            wid = db.current_wave_id(conn)
+            if wid is None:
+                err_console.print("[dim]No waves exist yet. Use 'puget new' to start one.[/dim]")
+                sys.exit(EXIT_ERROR)
+
+        from puget.repl import run_repl
+        run_repl(resume=True, wave_id=wid)
+    except SystemExit:
+        raise
     except Exception as e:
         err_console.print(f"[bold red]Error:[/bold red] {e}")
         sys.exit(EXIT_ERROR)
@@ -275,7 +312,7 @@ def _print_skill_layers(by_layer: dict[str, list[dict[str, str]]]) -> None:
 
 # Known subcommand names. Used to distinguish one-shot messages from
 # subcommand invocations in main().
-_SUBCOMMANDS = {"say", "echo", "log", "new", "skill"}
+_SUBCOMMANDS = {"say", "echo", "log", "new", "resume", "skill"}
 
 
 def main():
@@ -285,9 +322,7 @@ def main():
 
       puget                        → REPL (no arguments, handled by click group)
       puget "message"              → one-shot: new wave, run to completion
-      puget -r "message"           → one-shot: resume most recent wave
-      puget --resume "message"     → same as -r
-      puget <command>              → subcommand dispatch (say, log, new, echo, skill)
+      puget <command>              → subcommand dispatch (say, log, new, resume, echo, skill)
       puget --skill <path> ...     → load an ephemeral skill for the session
 
     The --skill flag is consumed before click processing so it works in
@@ -296,7 +331,7 @@ def main():
 
     One-shot detection: if the first argument isn't a known subcommand
     or flag, everything after 'puget' is joined into a message and
-    executed via core.run(). The -r/--resume flag is consumed first.
+    executed via core.run().
     """
     # Extract --skill flags from sys.argv before click/oneshot processing.
     # This ensures ephemeral skills work in all modes.
@@ -326,31 +361,24 @@ def main():
 
     if remaining:
         args = remaining[:]
-        resume = False
-
-        # Consume -r / --resume before one-shot detection.
-        if args and args[0] in ("-r", "--resume"):
-            resume = True
-            args = args[1:]
 
         if args and args[0] not in _SUBCOMMANDS and not args[0].startswith("-"):
             message = " ".join(args)
-            _oneshot(message, resume=resume)
+            _oneshot(message)
             return
 
     cli()
 
 
-def _oneshot(message, *, resume=False):
+def _oneshot(message):
     """Run a one-shot message to completion.
 
     Sends the message, auto-executes any tool calls the model requests,
-    and exits. With resume=True, continues the most recent wave instead
-    of starting a new one.
+    and exits. Always starts a new wave.
     """
     try:
         conn = db.connect()
-        wid = db.ensure_wave(conn) if resume else db.new_wave(conn)
+        wid = db.new_wave(conn)
         core.run(conn, wid, message)
     except KeyboardInterrupt:
         err_console.print("\n[dim](interrupted)[/dim]")

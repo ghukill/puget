@@ -29,16 +29,20 @@ from puget.output import console, print_log, set_show_thinking, show_thinking
 from puget.skills import discover
 
 
-def run_repl(*, resume: bool = False):
+def run_repl(*, resume: bool = False, wave_id: int | None = None):
     """Run the interactive REPL.
 
-    With resume=True, continues the most recent wave. Otherwise starts
-    a new wave. Each user input is sent through core.run(), which
-    handles tool execution and model interaction to completion before
-    returning control to the prompt.
+    With resume=True, continues an existing wave. If wave_id is given,
+    that specific wave is resumed; otherwise the most recent wave is used.
+    With resume=False, starts a new wave.
+
+    Each user input is sent through core.run(), which handles tool
+    execution and model interaction to completion before returning
+    control to the prompt.
 
     Slash commands:
       /new            — start a new wave
+      /resume [ID]    — list waves or resume a specific wave
       /log            — print wave history
       /thinking off|low|on|auto — set the thinking policy
       /help           — show available commands
@@ -48,11 +52,15 @@ def run_repl(*, resume: bool = False):
 
     resuming = False
     if resume:
-        wid = db.current_wave_id(conn)
-        if wid is not None:
+        if wave_id is not None:
+            wid = wave_id
             resuming = True
         else:
-            wid = db.new_wave(conn)
+            wid = db.current_wave_id(conn)
+            if wid is not None:
+                resuming = True
+            else:
+                wid = db.new_wave(conn)
     else:
         wid = db.new_wave(conn)
 
@@ -61,7 +69,7 @@ def run_repl(*, resume: bool = False):
     console.print()
     label = f"resuming wave #{wid}" if resuming else "new wave"
     console.print(Rule(f"[bold]puget[/bold]  [dim]model: {model_name} • {label}[/dim]"))
-    console.print("[dim]  Enter sends • Esc+Enter for newline • /new /log /thinking /quit[/dim]")
+    console.print("[dim]  Enter sends • Esc+Enter for newline • /new /resume /log /thinking /quit[/dim]")
     console.print(f"[dim]  {_thinking_status_text()}[/dim]")
     console.print()
 
@@ -99,6 +107,11 @@ def run_repl(*, resume: bool = False):
             elif lowered == "/new":
                 wid = db.new_wave(conn)
                 console.print(f"[dim]New wave (id: {wid})[/dim]")
+                continue
+            elif lowered.startswith("/resume"):
+                wid = _handle_resume_cmd(text, conn, wid)
+                if wid is not None:
+                    resuming = True
                 continue
             elif lowered == "/log":
                 turns = db.get_turns(conn, wid)
@@ -155,6 +168,8 @@ _SLASH_COMMANDS = {
     "/log": "print wave history",
     "/model": "show models or switch the active model",
     "/new": "start a new wave",
+    "/quit": "exit",
+    "/resume": "list waves or resume a specific wave",
     "/quit": "exit",
     "/thinking": "set the model thinking policy",
 }
@@ -309,11 +324,53 @@ def _handle_model_cmd(cmd: str) -> None:
     console.print(f"[dim]capabilities: {caps} • context: {info['context_window']}[/dim]")
 
 
+def _handle_resume_cmd(cmd: str, conn, current_wid: int) -> int | None:
+    """Handle /resume [ID] command.
+
+    With no ID, lists all waves with previews. With an ID, switches to
+    that wave and returns its ID. Returns None if no switch occurred.
+    """
+    parts = cmd.split(None, 1)
+
+    if len(parts) == 1:
+        # List waves.
+        waves = db.list_waves(conn, max_chars=200)
+        if not waves:
+            console.print("[dim]No waves yet.[/dim]")
+            return None
+
+        console.print()
+        for w in waves:
+            marker = " → " if w["id"] == current_wid else "   "
+            console.print(f"{marker}[bold]{w['id']:>3}[/bold]  [dim]{w['preview']}[/dim]")
+        console.print()
+        return None
+
+    # Resume specific wave.
+    selection = parts[1].strip()
+    if not selection.isdigit():
+        console.print("[dim]Usage: /resume [wave_id][/dim]")
+        return None
+
+    target_id = int(selection)
+    row = conn.execute(
+        "SELECT id FROM waves WHERE id = ?", (target_id,)
+    ).fetchone()
+    if row is None:
+        console.print(f"[dim]Wave {target_id} not found.[/dim]")
+        return None
+
+    preview = db.wave_preview(conn, target_id, max_chars=60)
+    console.print(f"[dim]Resuming wave #{target_id}: {preview}[/dim]")
+    return target_id
+
+
 def _print_help():
     """Print available REPL commands."""
     console.print()
     console.print("[bold]Commands:[/bold]")
     console.print("  /new              — start a new wave")
+    console.print("  /resume [ID]      — list waves or resume a specific wave")
     console.print("  /log              — print wave history")
     console.print("  /model [name|#]   — show models or switch the active model")
     console.print("  /thinking [off|low|on|auto] — set the model thinking policy")

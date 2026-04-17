@@ -119,6 +119,37 @@ def ensure_wave(conn: sqlite3.Connection) -> int:
     return wid
 
 
+def list_waves(conn: sqlite3.Connection, max_chars: int = 200) -> list[dict[str, Any]]:
+    """List all waves in reverse chronological order with previews.
+
+    Returns a list of dicts with keys: id, label, created_at, preview.
+    The preview is truncated to max_chars.
+    """
+    rows = conn.execute(
+        "SELECT id, label, created_at FROM waves ORDER BY id DESC"
+    ).fetchall()
+    result = []
+    for row in rows:
+        preview = row["label"] or None
+        if preview is None:
+            # Fall back to first user message.
+            msg = conn.execute(
+                "SELECT content FROM turns "
+                "WHERE wave_id = ? AND role = 'user' ORDER BY id LIMIT 1",
+                (row["id"],),
+            ).fetchone()
+            preview = msg["content"] if msg else "(empty)"
+        if len(preview) > max_chars:
+            preview = preview[:max_chars] + "\u2026"
+        result.append({
+            "id": row["id"],
+            "label": row["label"],
+            "created_at": row["created_at"],
+            "preview": preview,
+        })
+    return result
+
+
 def wave_preview(conn: sqlite3.Connection, wave_id: int, max_chars: int = 250) -> str:
     """Get a preview string for a wave.
 
