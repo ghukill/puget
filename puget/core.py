@@ -117,9 +117,10 @@ def run(conn: sqlite3.Connection, wid: int, message: str) -> dict[str, Any]:
     print_thinking(response.get("thinking"))
 
     # If the model responded with both text and tool calls, show the text
-    # before we start executing tools.
+    # before we start executing tools. Style it as intermediate (dim
+    # italic) since it's reasoning "out loud" rather than the final answer.
     if response["content"] and response["tool_calls"]:
-        print_assistant(response["content"])
+        print_assistant(response["content"], intermediate=True)
 
     while response["tool_calls"]:
         for tc in response["tool_calls"]:
@@ -137,9 +138,10 @@ def run(conn: sqlite3.Connection, wid: int, message: str) -> dict[str, Any]:
         # Show thinking if the model produced any.
         print_thinking(response.get("thinking"))
 
-        # Show any text that accompanies further tool calls.
+        # Show any text that accompanies further tool calls (intermediate
+        # reasoning, not the final answer).
         if response["content"] and response["tool_calls"]:
-            print_assistant(response["content"])
+            print_assistant(response["content"], intermediate=True)
 
     # Final text-only response.
     print_assistant(response["content"])

@@ -35,16 +35,22 @@ def set_show_thinking(value: bool) -> None:
     _show_thinking = value
 
 
-def print_assistant(content: str) -> None:
+def print_assistant(content: str, *, intermediate: bool = False) -> None:
     """Render an assistant response as markdown.
 
     The response is parsed as markdown and printed with a blank line
     above and below for breathing room. Empty or whitespace-only
     content is silently skipped.
+
+    When intermediate=True, the content is rendered in dim italic style
+    to distinguish it from the final response. This is used for
+    assistant text that accompanies tool calls — the model's "out loud"
+    reasoning between tool invocations.
     """
     if content and content.strip():
+        style = "dim italic" if intermediate else "none"
         console.print()
-        console.print(Markdown(content))
+        console.print(Markdown(content, style=style))
         console.print()
 
 
