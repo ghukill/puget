@@ -131,8 +131,9 @@ def run_repl(*, resume: bool = False, wave_id: int | None = None):
         console.print()
 
         try:
-            response = core.run(conn, wid, text)
-            wid = response.get("wave_id", wid)
+            with console.status("[dim]thinking…[/dim]", spinner="dots"):
+                response = core.run(conn, wid, text)
+                wid = response.get("wave_id", wid)
         except KeyboardInterrupt:
             console.print("\n[dim](interrupted)[/dim]")
         except Exception as e:

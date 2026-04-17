@@ -61,7 +61,8 @@ def say(message):
         conn = db.connect()
         wid = db.new_wave(conn)
 
-        response = core.turn(conn, wid, message)
+        with console.status("[dim]thinking…[/dim]", spinner="dots"):
+            response = core.turn(conn, wid, message)
 
         print_thinking(response.get("thinking"))
 
@@ -379,7 +380,8 @@ def _oneshot(message):
     try:
         conn = db.connect()
         wid = db.new_wave(conn)
-        core.run(conn, wid, message)
+        with console.status("[dim]thinking…[/dim]", spinner="dots"):
+            core.run(conn, wid, message)
     except KeyboardInterrupt:
         err_console.print("\n[dim](interrupted)[/dim]")
         sys.exit(EXIT_ERROR)
