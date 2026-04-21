@@ -116,6 +116,7 @@ def run_repl(*, resume: bool = False, wave_id: int | None = None):
             elif lowered == "/new":
                 wid = db.new_wave(conn)
                 console.print(f"[dim]New wave (id: {wid})[/dim]")
+                console.print()
                 continue
             elif lowered.startswith("/resume"):
                 wid = _handle_resume_cmd(text, conn, wid)
@@ -125,6 +126,7 @@ def run_repl(*, resume: bool = False, wave_id: int | None = None):
             elif lowered == "/log":
                 turns = db.get_turns(conn, wid)
                 print_log(turns)
+                console.print()
                 continue
             elif lowered.startswith("/thinking"):
                 _handle_thinking_cmd(text)
@@ -281,16 +283,19 @@ def _handle_thinking_cmd(cmd: str) -> None:
     parts = cmd.split()
     if len(parts) == 1:
         console.print(f"[dim]{_thinking_status_text()}[/dim]")
+        console.print()
         return
 
     mode = parts[1].strip().lower()
     if mode not in _THINKING_ARGS:
         console.print("[dim]Usage: /thinking [off|low|on|auto][/dim]")
+        console.print()
         return
 
     set_thinking_mode(mode)
     set_show_thinking(mode != "off")
     console.print(f"[dim]{_thinking_status_text()}[/dim]")
+    console.print()
 
 
 def _handle_model_cmd(cmd: str) -> None:
@@ -332,6 +337,7 @@ def _handle_model_cmd(cmd: str) -> None:
     caps = ", ".join(info["capabilities"]) if info["capabilities"] else "unknown"
     console.print(f"[dim]model: {get_model()}[/dim]")
     console.print(f"[dim]capabilities: {caps} • context: {info['context_window']}[/dim]")
+    console.print()
 
 
 def _handle_resume_cmd(cmd: str, conn, current_wid: int) -> int | None:
@@ -368,10 +374,12 @@ def _handle_resume_cmd(cmd: str, conn, current_wid: int) -> int | None:
     ).fetchone()
     if row is None:
         console.print(f"[dim]Wave {target_id} not found.[/dim]")
+        console.print()
         return None
 
     preview = db.wave_preview(conn, target_id, max_chars=60)
     console.print(f"[dim]Resuming wave #{target_id}: {preview}[/dim]")
+    console.print()
     return target_id
 
 
