@@ -208,3 +208,6 @@ __marimo__/
 
 # puget local data
 .puget/
+
+# Claude Code local state (worktrees, session data)
+.claude/

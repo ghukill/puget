@@ -29,6 +29,30 @@ EXIT_TOOL = 10
 EXIT_ERROR = 1
 
 
+def _read_stdin() -> str | None:
+    """Read from stdin if data is piped, otherwise return None."""
+    if not sys.stdin.isatty():
+        try:
+            data = sys.stdin.read()
+            return data if data.strip() else None
+        except (OSError, IOError):
+            return None
+    return None
+
+
+def _combine_message(message: str, stdin_text: str | None) -> str:
+    """Merge a CLI message with piped stdin content.
+
+    If both are present, the stdin text is appended after the message.
+    If only stdin is present, it is returned as the message.
+    """
+    if stdin_text is None:
+        return message
+    if message:
+        return f"{message}\n\n{stdin_text}"
+    return stdin_text
+
+
 @click.group(invoke_without_command=True)
 @click.pass_context
 def cli(ctx):
@@ -61,8 +85,11 @@ def say(message):
         conn = db.connect()
         wid = db.new_wave(conn)
 
+        stdin_text = _read_stdin()
+        combined = _combine_message(message, stdin_text)
+
         with console.status("[dim]thinking…[/dim]", spinner="dots"):
-            response = core.turn(conn, wid, message)
+            response = core.turn(conn, wid, combined)
 
         print_thinking(response.get("thinking"))
 
@@ -365,13 +392,14 @@ def main():
 
         if args and args[0] not in _SUBCOMMANDS and not args[0].startswith("-"):
             message = " ".join(args)
-            _oneshot(message)
+            stdin_text = _read_stdin()
+            _oneshot(message, stdin_text)
             return
 
     cli()
 
 
-def _oneshot(message):
+def _oneshot(message, stdin_text=None):
     """Run a one-shot message to completion.
 
     Sends the message, auto-executes any tool calls the model requests,
@@ -380,8 +408,9 @@ def _oneshot(message):
     try:
         conn = db.connect()
         wid = db.new_wave(conn)
+        combined = _combine_message(message, stdin_text)
         with console.status("[dim]thinking…[/dim]", spinner="dots"):
-            core.run(conn, wid, message)
+            core.run(conn, wid, combined)
     except KeyboardInterrupt:
         err_console.print("\n[dim](interrupted)[/dim]")
         sys.exit(EXIT_ERROR)
